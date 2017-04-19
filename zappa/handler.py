@@ -504,6 +504,7 @@ class LambdaHandler(object):
 
             # Print statements are visible in the logs either way
             print(e)
+            print(traceback.format_exc(e))
             exc_info = sys.exc_info()
             message = ('An uncaught exception happened while servicing this request. '
                        'You can investigate this with the `zappa tail` command.')

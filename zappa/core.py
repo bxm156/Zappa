@@ -502,9 +502,10 @@ class Zappa(object):
 
             # Then try to use manylinux packages from PyPi..
             # Related: https://github.com/Miserlou/Zappa/issues/398
+            lambda_package_list = [k.lower() for k in lambda_packages.keys()]
             try:
                 for installed_package_name in installed_packages_name_set:
-                    if installed_package_name not in lambda_packages:
+                    if installed_package_name not in lambda_package_list:
                         wheel_url = self.get_manylinux_wheel(installed_package_name)
                         if wheel_url:
                             resp = requests.get(wheel_url, timeout=2, stream=True)

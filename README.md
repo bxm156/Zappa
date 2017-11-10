@@ -67,6 +67,7 @@
     - [Raising AWS Service Limits](#raising-aws-service-limits)
     - [Using Zappa With Docker](#using-zappa-with-docker)
     - [Dead Letter Queues](#dead-letter-queues)
+    - [Unique Package ID](#unique-package-id)
 - [Zappa Guides](#zappa-guides)
 - [Zappa in the Press](#zappa-in-the-press)
 - [Sites Using Zappa](#sites-using-zappa)
@@ -88,7 +89,7 @@
   <i>In a hurry? Click to see <a href="https://htmlpreview.github.io/?https://raw.githubusercontent.com/Miserlou/Talks/master/serverless-sf/big.quickstart.html">(now slightly out-dated) slides from Serverless SF</a>!</i>
 </p>
 
-**Zappa** makes it super easy to build and deploy server-less Python applications (including, but not limited to, WSGI web apps) on AWS Lambda + API Gateway. Think of it as "serverless" web hosting for your Python apps. That means **infinite scaling**, **zero downtime**, **zero maintenance** - and at a fraction of the cost of your current deployments!
+**Zappa** makes it super easy to build and deploy server-less, event-driven Python applications (including, but not limited to, WSGI web apps) on AWS Lambda + API Gateway. Think of it as "serverless" web hosting for your Python apps. That means **infinite scaling**, **zero downtime**, **zero maintenance** - and at a fraction of the cost of your current deployments!
 
 If you've got a Python web app (including Django and Flask apps), it's as easy as:
 
@@ -368,7 +369,7 @@ For commands which have their own arguments, you can also pass the command in as
 
     $ zappa manage production "shell --version"
 
-Commands which require direct user input, such as `createsuperuser`, should be [replaced by commands](http://stackoverflow.com/a/26091252) which use `zappa <env> invoke --raw`.
+Commands which require direct user input, such as `createsuperuser`, should be [replaced by commands](http://stackoverflow.com/a/26091252) which use `zappa invoke <env> --raw`.
 
 _(Please note that commands which take over 30 seconds to execute may time-out. See [this related issue](https://github.com/Miserlou/Zappa/issues/205#issuecomment-236391248) for a work-around.)_
 
@@ -475,7 +476,7 @@ Events can also take keyword arguments.
                 "function": "your_module.your_recurring_function", // The function to execute
                 "kwargs": {"key": "val", "key2": "val2"},  // Keyword arguments to pass. These are available in the event
                 "expression": "rate(1 minute)" // When to execute it (in cron or rate format)
-            }    
+            }
        ]
 ```
 
@@ -494,7 +495,7 @@ You can find more [example event sources here](http://docs.aws.amazon.com/lambda
 
 Zappa also now offers the ability to seamlessly execute functions asynchronously in a completely separate AWS Lambda instance!
 
-For example, if you have a Flask API for ordering a pie, you can call your `bake` function seamlessly in a completely seperate Lambda instance by using the `zappa.async.task` decorator like so:
+For example, if you have a Flask API for ordering a pie, you can call your `bake` function seamlessly in a completely separate Lambda instance by using the `zappa.async.task` decorator like so:
 
 ```python
 from flask import Flask
@@ -520,7 +521,7 @@ And that's it! Your API response will return immediately, while the `make_pie` f
 
 When calls to @task decorated functions or the zappa.async.run command occur outside of Lambda, such as your local dev environment,
 the functions will execute immediately and locally. The zappa async functionality only works
-when in the Lambda environment or when specifying [Remote Invocations](https://github.com/Miserlou/zappa#remote-invocations). 
+when in the Lambda environment or when specifying [Remote Invocations](https://github.com/Miserlou/zappa#remote-invocations).
 
 ### Task Sources
 
@@ -644,7 +645,7 @@ def response(response_id):
 
     return "Not yet ready. Redirecting.", 302, {
         'Content-Type': 'text/plain; charset=utf-8',
-        'Location': url_for('response', response_id=response_id, backoff=5)),
+        'Location': url_for('response', response_id=response_id, backoff=5),
         'X-redirect-reason': "Not yet ready.",
     }
 
@@ -749,6 +750,7 @@ to change Zappa's behavior. Use these at your own risk!
         "project_name": "MyProject", // The name of the project as it appears on AWS. Defaults to a slugified `pwd`.
         "remote_env": "s3://my-project-config-files/filename.json", // optional file in s3 bucket containing a flat json object which will be used to set custom environment variables.
         "role_name": "MyLambdaRole", // Name of Zappa execution role. Default <project_name>-<env>-ZappaExecutionRole. To use a different, pre-existing policy, you must also set manage_roles to false.
+        "role_arn": "arn:aws:iam::12345:role/app-ZappaLambdaExecutionRole", // ARN of Zappa execution role. Default to None. To use a different, pre-existing policy, you must also set manage_roles to false. This overrides role_name. Use with temporary credentials via GetFederationToken.
         "route53_enabled": true, // Have Zappa update your Route53 Hosted Zones when certifying with a custom domain. Default true.
         "runtime": "python2.7", // Python runtime to use on Lambda. Can be one of "python2.7" or "python3.6". Defaults to whatever the current Python being used is.
         "s3_bucket": "dev-bucket", // Zappa zip bucket,
@@ -821,7 +823,7 @@ Similarly, you may want to design your application so that static binary uploads
 
 The simplest way to enable CORS (Cross-Origin Resource Sharing) for in your Zappa application is to set `cors` to `true` in your Zappa settings file and updating, which is the equivalent of pushing the "Enable CORS" button in the AWS API Gateway console. This is disabled by default, but you may wish to enable it for APIs which are accessed from other domains, etc. It may also conflict with `binary_support`, so you should set that to `false` in your settings.
 
-You can also simply handle CORS directly in your application. Your web framework will probably have an extention to do this, such as [django-cors-headers](https://github.com/ottoyiu/django-cors-headers) or [Flask-CORS](https://github.com/corydolphin/flask-cors). Using these will make your code more portable.
+You can also simply handle CORS directly in your application. Your web framework will probably have an extension to do this, such as [django-cors-headers](https://github.com/ottoyiu/django-cors-headers) or [Flask-CORS](https://github.com/corydolphin/flask-cors). Using these will make your code more portable.
 
 #### Large Projects
 
@@ -867,6 +869,23 @@ If you are wondering for what you would use an Authorizer, here are some potenti
 3. Lookup in a self-managed DB (for example DynamoDB)
 
 Zappa can be configured to call a function inside your code to do the authorization, or to call some other existing lambda function (which lets you share the authorizer between multiple lambdas). You control the behavior by specifying either the `arn` or `function_name` values in the `authorizer` settings block.
+
+For example, to get the Cognito identity, add this to a `zappa_settings.yaml`:
+
+```yaml
+  context_header_mappings:
+    user_id: authorizer.user_id
+```
+
+Which can now be accessed in Flask like this:
+
+```python
+from flask import request
+
+@route('/hello')
+def hello_world:
+   print(request.headers.get('user_id'))
+```
 
 ##### Cognito User Pool Authorizer
 
@@ -916,7 +935,7 @@ Amazon also provides their own free alternative to Let's Encrypt called [AWS Cer
 2. In the console, select the N. Virginia (us-east-1) region and request a certificate for your domain or subdomain (`sub.yourdomain.tld`), or request a wildcard domain (`*.yourdomain.tld`).
 3. Copy the entire ARN of that certificate and place it in the Zappa setting `certificate_arn`.
 4. Set your desired domain in the `domain` setting.
-5. Call `$ zappa certify` to create and associate the API Gateway distribution using that ceritficate.
+5. Call `$ zappa certify` to create and associate the API Gateway distribution using that certificate.
 
 #### Setting Environment Variables
 
@@ -1157,6 +1176,19 @@ If you want to utilise [AWS Lambda's Dead Letter Queue feature](http://docs.aws.
 
 You must have already created the corresponding SNS/SQS topic/queue, and the Lambda function execution role must have been provisioned with read/publish/sendMessage access to the DLQ resource.
 
+#### Unique Package ID
+
+For monitoring of different deployments, a unique UUID for each package is available in `package_info.json` in the root directory of your application's package.  You can use this information or a hash of this file for such things as tracking errors across different deployments, monitoring status of deployments and other such things on services such as Sentry and New Relic. The package will contain:
+
+```json
+{
+  "build_platform": "darwin",
+  "build_user": "frank",
+  "build_time": "1509732511",
+  "uuid": "9c2df9e6-30f4-4c0a-ac4d-4ecb51831a74"
+}
+```
+
 ## Zappa Guides
 
 * [Django-Zappa tutorial (screencast)](https://www.youtube.com/watch?v=plUrbPN0xc8&feature=youtu.be).
@@ -1216,7 +1248,7 @@ Are you using Zappa? Let us know and we'll list your site here!
 * [zappa-dashing](https://github.com/nikos/zappa-dashing) - Monitor your AWS environment (health/metrics) with Zappa and CloudWatch.
 * [s3env](https://github.com/cameronmaske/s3env) - Manipulate a remote Zappa environment variable key/value JSON object file in an S3 bucket through the CLI.
 * [zappa_resize_image_on_fly](https://github.com/wobeng/zappa_resize_image_on_fly) - Resize images on the fly using Flask, Zappa, Pillow, and OpenCV-python.
-* [zappa-ffmpeg](https://github.com/ubergarm/zappa-ffmpeg) - Run ffmpeg inside a lambda for serverless transformations. 
+* [zappa-ffmpeg](https://github.com/ubergarm/zappa-ffmpeg) - Run ffmpeg inside a lambda for serverless transformations.
 * [gdrive-lambda](https://github.com/richiverse/gdrive-lambda) - pass json data to a csv file for end users who use Gdrive across the organization.
 * [travis-build-repeat](https://github.com/bcongdon/travis-build-repeat) - Repeat TravisCI builds to avoid stale test results.
 * [wunderskill-alexa-skill](https://github.com/mcrowson/wunderlist-alexa-skill) - An Alexa skill for adding to a Wunderlist.
@@ -1240,7 +1272,7 @@ Please file tickets for discussion before submitting patches. Pull requests shou
 
 If you are adding a non-trivial amount of new code, please include a functioning test in your PR. For AWS calls, we use the `placebo` library, which you can learn to use [in their README](https://github.com/garnaat/placebo#usage-as-a-decorator). The test suite will be run by [Travis CI](https://travis-ci.org/Miserlou/Zappa) once you open a pull request.
 
-Please include the GitHub issue or pull request URL that has discussion related to your changes as a comment in the code ([example](https://github.com/Miserlou/Zappa/blob/fae2925431b820eaedf088a632022e4120a29f89/zappa/zappa.py#L241-L243)). This greatly helps for project maintainability, as it allows us to trace back use cases and explain decision making. Similarly, please make sure that you meet all of the requiments listed in the [pull request template](https://raw.githubusercontent.com/Miserlou/Zappa/master/.github/PULL_REQUEST_TEMPLATE.md).
+Please include the GitHub issue or pull request URL that has discussion related to your changes as a comment in the code ([example](https://github.com/Miserlou/Zappa/blob/fae2925431b820eaedf088a632022e4120a29f89/zappa/zappa.py#L241-L243)). This greatly helps for project maintainability, as it allows us to trace back use cases and explain decision making. Similarly, please make sure that you meet all of the requirements listed in the [pull request template](https://raw.githubusercontent.com/Miserlou/Zappa/master/.github/PULL_REQUEST_TEMPLATE.md).
 
 Please feel free to work on any open ticket, especially any ticket marked with the "help-wanted" label. If you get stuck or want to discuss an issue further, please join [our Slack channel](https://slack.zappa.io), where you'll find a community of smart and interesting people working dilligently on hard problems.
 
@@ -1260,6 +1292,8 @@ Zappa is currently supported by these awesome individuals and companies:
   * LaunchLab
   * Sean Paley
   * Theo Chitayat
+  * George Sibble
+  * Joe Weiss
 
 Thank you very, very much!
 

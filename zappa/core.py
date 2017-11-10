@@ -10,6 +10,7 @@ from __future__ import print_function
 
 import boto3
 import botocore
+import getpass
 import glob
 import hashlib
 import json
@@ -26,6 +27,7 @@ import time
 import troposphere
 import troposphere.apigateway
 import zipfile
+import uuid
 
 from builtins import int, bytes
 from botocore.exceptions import ClientError
@@ -228,6 +230,7 @@ class Zappa(object):
             aws_region=None,
             load_credentials=True,
             desired_role_name=None,
+            desired_role_arn=None,
             runtime='python2.7', # Detected at runtime in CLI
             tags=(),
             endpoint_urls={},
@@ -247,6 +250,9 @@ class Zappa(object):
 
         if desired_role_name:
             self.role_name = desired_role_name
+
+        if desired_role_arn:
+            self.credentials_arn = desired_role_arn
 
         self.runtime = runtime
 
@@ -447,12 +453,13 @@ class Zappa(object):
         if not venv:
             venv = self.get_current_venv()
 
+        build_time = str(int(time.time()))
         cwd = os.getcwd()
         if not output:
             if archive_format == 'zip':
-                archive_fname = prefix + '-' + str(int(time.time())) + '.zip'
+                archive_fname = prefix + '-' + build_time + '.zip'
             elif archive_format == 'tarball':
-                archive_fname = prefix + '-' + str(int(time.time())) + '.tar.gz'
+                archive_fname = prefix + '-' + build_time + '.tar.gz'
         else:
             archive_fname = output
         archive_path = os.path.join(cwd, archive_fname)
@@ -507,6 +514,53 @@ class Zappa(object):
         if handler_file:
             filename = handler_file.split(os.sep)[-1]
             shutil.copy(handler_file, os.path.join(temp_project_path, filename))
+
+        # Create and populate package ID file and write to temp project path
+        package_info = {}
+        package_info['uuid'] = str(uuid.uuid4())
+        package_info['build_time'] = build_time
+        package_info['build_platform'] = os.sys.platform
+        package_info['build_user'] = getpass.getuser()
+        # TODO: Add git head and info?
+
+        # Ex, from @scoates:
+        # def _get_git_branch():
+        #     chdir(DIR)
+        #     out = check_output(['git', 'rev-parse', '--abbrev-ref', 'HEAD']).strip()
+        #     lambci_branch = environ.get('LAMBCI_BRANCH', None)
+        #     if out == "HEAD" and lambci_branch:
+        #         out += " lambci:{}".format(lambci_branch)
+        #     return out
+
+        # def _get_git_hash():
+        #     chdir(DIR)
+        #     return check_output(['git', 'rev-parse', 'HEAD']).strip()
+
+        # def _get_uname():
+        #     return check_output(['uname', '-a']).strip()
+
+        # def _get_user():
+        #     return check_output(['whoami']).strip()
+
+        # def set_id_info(zappa_cli):
+        #     build_info = {
+        #         'branch': _get_git_branch(),
+        #         'hash': _get_git_hash(),
+        #         'build_uname': _get_uname(),
+        #         'build_user': _get_user(),
+        #         'build_time': datetime.datetime.utcnow().isoformat(),
+        #     }
+        #     with open(path.join(DIR, 'id_info.json'), 'w') as f:
+        #         json.dump(build_info, f)
+        #     return True
+
+        package_id_file = open(os.path.join(temp_project_path, 'package_info.json'), 'w')
+        dumped = json.dumps(package_info, indent=4)
+        try:
+            package_id_file.write(dumped)
+        except TypeError: # This is a Python 2/3 issue. TODO: Make pretty!
+            package_id_file.write(unicode(dumped))
+        package_id_file.close()
 
         # Then, do site site-packages..
         egg_links = []
@@ -564,6 +618,13 @@ class Zappa(object):
                             lambda_version = lambda_packages[installed_package_name][self.runtime]['version']
                             print(" - %s==%s: Warning! Using precompiled lambda package version %s instead!" % (installed_package_name, installed_package_version, lambda_version, ))
                             self.extract_lambda_package(installed_package_name, temp_project_path)
+
+                # This is a special case!
+                # SQLite3 is part of the _system_ Python, not a package. Still, it lives in `lambda-packages`.
+                # Everybody on Python3 gets it!
+                if self.runtime == "python3.6":
+                    print(" - sqlite==python36: Using precompiled lambda package")
+                    self.extract_lambda_package('sqlite3', temp_project_path)
 
             except Exception as e:
                 print(e)
@@ -758,7 +819,7 @@ class Zappa(object):
             print(" - {}=={}: Downloading".format(package_name, package_version))
             with open(wheel_path, 'wb') as f:
                 self.download_url_with_progress(wheel_url, f, disable_progress)
-            
+
             if not zipfile.is_zipfile(wheel_path):
                 return None
         else:
@@ -777,7 +838,7 @@ class Zappa(object):
         This function downloads metadata JSON of `package_name` from Pypi
         and examines if the package has a manylinux wheel. This function
         also caches the JSON file so that we don't have to poll Pypi
-        everytime.
+        every time.
         """
         cached_pypi_info_dir = os.path.join(tempfile.gettempdir(), 'cached_pypi_info')
         if not os.path.isdir(cached_pypi_info_dir):
@@ -801,7 +862,7 @@ class Zappa(object):
                 return None
             with open(json_file_path, 'wb') as metafile:
                 jsondata = json.dumps(data)
-                metafile.write(bytes(jsondata, "utf-8")) 
+                metafile.write(bytes(jsondata, "utf-8"))
 
         if package_version not in data['releases']:
             return None
@@ -931,10 +992,10 @@ class Zappa(object):
     ##
 
     def create_lambda_function( self,
-                                bucket,
-                                s3_key,
-                                function_name,
-                                handler,
+                                bucket=None,
+                                function_name=None,
+                                handler=None,
+                                s3_key=None,
                                 description='Zappa Deployment',
                                 timeout=30,
                                 memory_size=512,
@@ -944,10 +1005,11 @@ class Zappa(object):
                                 runtime='python2.7',
                                 aws_environment_variables=None,
                                 aws_kms_key_arn=None,
-                                xray_tracing=False
+                                xray_tracing=False,
+                                local_zip=None
                             ):
         """
-        Given a bucket and key of a valid Lambda-zip, a function name and a handler, register that Lambda function.
+        Given a bucket and key (or a local path) of a valid Lambda-zip, a function name and a handler, register that Lambda function.
         """
         if not vpc_config:
             vpc_config = {}
@@ -960,15 +1022,11 @@ class Zappa(object):
         if not aws_kms_key_arn:
             aws_kms_key_arn = ''
 
-        response = self.lambda_client.create_function(
+        kwargs = dict(
             FunctionName=function_name,
             Runtime=runtime,
             Role=self.credentials_arn,
             Handler=handler,
-            Code={
-                'S3Bucket': bucket,
-                'S3Key': s3_key,
-            },
             Description=description,
             Timeout=timeout,
             MemorySize=memory_size,
@@ -981,6 +1039,17 @@ class Zappa(object):
                 'Mode': 'Active' if self.xray_tracing else 'PassThrough'
             }
         )
+        if local_zip:
+            kwargs['Code'] = {
+                'ZipFile': local_zip
+            }
+        else:
+            kwargs['Code'] = {
+                'S3Bucket': bucket,
+                'S3Key': s3_key
+            }
+
+        response = self.lambda_client.create_function(**kwargs)
 
         resource_arn = response['FunctionArn']
 
@@ -989,18 +1058,23 @@ class Zappa(object):
 
         return resource_arn
 
-    def update_lambda_function(self, bucket, s3_key, function_name, publish=True):
+    def update_lambda_function(self, bucket, function_name, s3_key=None, publish=True, local_zip=None):
         """
-        Given a bucket and key of a valid Lambda-zip, a function name and a handler, update that Lambda function's code.
+        Given a bucket and key (or a local path) of a valid Lambda-zip, a function name and a handler, update that Lambda function's code.
         """
         print("Updating Lambda function code..")
 
-        response = self.lambda_client.update_function_code(
+        kwargs = dict(
             FunctionName=function_name,
-            S3Bucket=bucket,
-            S3Key=s3_key,
             Publish=publish
         )
+        if local_zip:
+            kwargs['ZipFile'] = local_zip
+        else:
+            kwargs['S3Bucket'] = bucket
+            kwargs['S3Key'] = s3_key
+
+        response = self.lambda_client.update_function_code(**kwargs)
 
         return response['FunctionArn']
 
@@ -2627,7 +2701,7 @@ class Zappa(object):
     @staticmethod
     def get_dns_challenge_change_batch(action, domain, txt_challenge):
         """
-        Given action, domain and challege, return a change batch to use with
+        Given action, domain and challenge, return a change batch to use with
         route53 call.
 
         :param action: DELETE | UPSERT

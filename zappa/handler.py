@@ -10,9 +10,7 @@ import json
 import logging
 import os
 import sys
-import tempfile
 import traceback
-import zipfile
 import tarfile
 
 from builtins import str
@@ -93,7 +91,7 @@ class LambdaHandler(object):
                 pass
 
             # Set any locally defined env vars
-            # Environement variable keys can't be Unicode
+            # Environment variable keys can't be Unicode
             # https://github.com/Miserlou/Zappa/issues/604
             for key in self.settings.ENVIRONMENT_VARIABLES.keys():
                 os.environ[str(key)] = self.settings.ENVIRONMENT_VARIABLES[key]
@@ -215,7 +213,7 @@ class LambdaHandler(object):
                     key,
                     value
                 ))
-            # Environement variable keys can't be Unicode
+            # Environment variable keys can't be Unicode
             # https://github.com/Miserlou/Zappa/issues/604
             try:
                 os.environ[str(key)] = value
@@ -351,7 +349,7 @@ class LambdaHandler(object):
 
         # This is a direct, raw python invocation.
         # It's _extremely_ important we don't allow this event source
-        # to be overriden by unsanitized, non-admin user input.
+        # to be overridden by unsanitized, non-admin user input.
         elif event.get('raw_command', None):
 
             raw_command = event['raw_command']
